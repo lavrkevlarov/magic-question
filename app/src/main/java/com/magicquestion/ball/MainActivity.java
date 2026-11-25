@@ -69,7 +69,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         super.onCreate(savedInstanceState);
 
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.rgb(10, 8, 30));
+        root.setBackgroundColor(Color.rgb(6, 8, 20));
 
         ballView = new BallView(this);
         root.addView(ballView, new FrameLayout.LayoutParams(
@@ -87,15 +87,6 @@ public class MainActivity extends Activity implements SensorEventListener {
                 Gravity.BOTTOM);
         root.addView(hint, lp);
 
-        TextView title = new TextView(this);
-        title.setText("Магический шар");
-        title.setTextColor(Color.argb(220, 190, 180, 255));
-        title.setTextSize(26);
-        title.setGravity(Gravity.CENTER);
-        title.setPadding(pad, pad * 2, pad, pad);
-        root.addView(title, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP));
 
         ballView.setListener(new BallView.Listener() {
             @Override
