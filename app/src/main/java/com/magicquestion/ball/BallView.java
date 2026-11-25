@@ -32,7 +32,7 @@ public class BallView extends View {
     }
 
     private static final long SPIN_DURATION_MS = 3000;
-    private static final long REVEAL_DURATION_MS = 800;
+    private static final long REVEAL_DURATION_MS = 900;
     private static final int TURNS = 5;          // сколько оборотов делает шар
     private static final float WINDOW_K = 0.45f; // радиус окошка относительно радиуса шара
 
@@ -53,9 +53,13 @@ public class BallView extends View {
     private final float[] starLat = new float[22];
     private final float[] starSize = new float[22];
 
-    // Текущий поворот сферы: вокруг вертикальной оси и наклон вперёд/назад
+    private static final float ZOOM_SCALE = 1.2f; // во сколько раз шар увеличивается с ответом
+
+    // Текущий поворот сферы: ось (единичный вектор) и угол вокруг неё
+    private float axisX = 0f, axisY = 1f, axisZ = 0f;
     private float spinAngle = 0f;
-    private float tiltAngle = 0f;
+    private float zoom = 1f;
+    private final Random random = new Random();
 
     private String answer = "?";
     private float answerAlpha = 1f;
@@ -124,16 +128,33 @@ public class BallView extends View {
         return Math.min(getWidth(), getHeight()) * 0.40f;
     }
 
-    /** Поворачивает точку сферы (долгота, широта) и возвращает {x, y, z}; z > 0 — к зрителю. */
+    /**
+     * Поворачивает точку сферы (долгота, широта) вокруг текущей оси на spinAngle
+     * (формула Родрига) и возвращает {x, y, z}; z > 0 — к зрителю.
+     */
     private void project(float lon, float lat, float[] out) {
-        double l = lon + spinAngle;
-        double x = Math.cos(lat) * Math.sin(l);
+        double x = Math.cos(lat) * Math.sin(lon);
         double y = Math.sin(lat);
-        double z = Math.cos(lat) * Math.cos(l);
-        double ct = Math.cos(tiltAngle), st = Math.sin(tiltAngle);
-        out[0] = (float) x;
-        out[1] = (float) (y * ct + z * st);
-        out[2] = (float) (-y * st + z * ct);
+        double z = Math.cos(lat) * Math.cos(lon);
+        double c = Math.cos(spinAngle), s = Math.sin(spinAngle);
+        double dot = axisX * x + axisY * y + axisZ * z;
+        double cx = axisY * z - axisZ * y;
+        double cy = axisZ * x - axisX * z;
+        double cz = axisX * y - axisY * x;
+        out[0] = (float) (x * c + cx * s + axisX * dot * (1 - c));
+        out[1] = (float) (y * c + cy * s + axisY * dot * (1 - c));
+        out[2] = (float) (z * c + cz * s + axisZ * dot * (1 - c));
+    }
+
+    /** Случайная ось вращения: в основном в плоскости экрана, чтобы окошко уходило за край. */
+    private void pickRandomAxis() {
+        double dir = random.nextDouble() * Math.PI * 2;
+        double depth = (random.nextDouble() - 0.5) * 0.8; // немного «подкрутки» к зрителю
+        double x = Math.cos(dir), y = Math.sin(dir), z = depth;
+        double len = Math.sqrt(x * x + y * y + z * z);
+        axisX = (float) (x / len);
+        axisY = (float) (y / len);
+        axisZ = (float) (z / len);
     }
 
     private final float[] p = new float[3];
@@ -269,6 +290,8 @@ public class BallView extends View {
     /** Крутит шар 3 секунды, затем проявляет новый ответ. */
     public void showAnswer(final String newAnswer) {
         animating = true;
+        pickRandomAxis();
+        final float startZoom = zoom;
 
         // ответ быстро гаснет в начале вращения
         ValueAnimator spin = ValueAnimator.ofFloat(0f, 1f);
@@ -281,11 +304,13 @@ public class BallView extends View {
                 float t = (float) a.getAnimatedValue();
                 float time = a.getCurrentPlayTime() / (float) SPIN_DURATION_MS;
                 spinAngle = (float) (t * TURNS * 2 * Math.PI);
-                tiltAngle = (float) (0.55 * Math.sin(time * Math.PI * 4) * (1 - t));
                 answerAlpha = Math.max(0f, startAlpha * (1 - time * 6));
+                // в начале вращения шар возвращается к обычному размеру
+                float k = Math.min(1f, time * 5);
+                zoom = startZoom + (1f - startZoom) * k;
                 float bounce = 1f + 0.04f * (float) Math.sin(time * Math.PI * 6) * (1 - t);
-                setScaleX(bounce);
-                setScaleY(bounce);
+                setScaleX(zoom * bounce);
+                setScaleY(zoom * bounce);
                 invalidate();
             }
         });
@@ -293,7 +318,7 @@ public class BallView extends View {
             @Override
             public void onAnimationEnd(Animator animation) {
                 spinAngle = 0f;
-                tiltAngle = 0f;
+                zoom = 1f;
                 setScaleX(1f);
                 setScaleY(1f);
                 answer = newAnswer;
@@ -310,6 +335,10 @@ public class BallView extends View {
                 float v = (float) a.getAnimatedValue();
                 answerAlpha = Math.min(1f, Math.max(0f, v));
                 answerScale = 0.5f + 0.5f * v;
+                // шар увеличивается вместе с появлением ответа
+                zoom = 1f + (ZOOM_SCALE - 1f) * v;
+                setScaleX(zoom);
+                setScaleY(zoom);
                 invalidate();
             }
         });
