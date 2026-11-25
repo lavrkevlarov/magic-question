@@ -17,6 +17,7 @@ import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
+import android.view.animation.LinearInterpolator;
 import android.view.animation.OvershootInterpolator;
 
 import java.util.Random;
@@ -32,7 +33,7 @@ public class BallView extends View {
     }
 
     private static final long SPIN_DURATION_MS = 3000;
-    private static final long REVEAL_DURATION_MS = 900;
+    private static final long REVEAL_DURATION_MS = 1500;
     private static final int TURNS = 5;          // сколько оборотов делает шар
     private static final float WINDOW_K = 0.45f; // радиус окошка относительно радиуса шара
 
@@ -40,7 +41,6 @@ public class BallView extends View {
     private final Paint shadePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint windowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint trianglePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint glarePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint starPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint floorPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -59,6 +59,8 @@ public class BallView extends View {
     private float axisX = 0f, axisY = 1f, axisZ = 0f;
     private float spinAngle = 0f;
     private float zoom = 1f;
+    private float windowGrow = 0f;  // 0 — обычное окошко, 1 — окошко размером с шар
+    private float windowAlpha = 1f; // непрозрачность круга окошка (0 — растворился)
     private final Random random = new Random();
 
     private String answer = "?";
@@ -75,10 +77,10 @@ public class BallView extends View {
         super(context);
         ringPaint.setStyle(Paint.Style.STROKE);
         ringPaint.setColor(Color.rgb(45, 45, 70));
-        trianglePaint.setColor(Color.rgb(35, 50, 190));
         starPaint.setColor(Color.rgb(170, 150, 255));
         textPaint.setColor(Color.WHITE);
         textPaint.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
+        textPaint.setShadowLayer(18f, 0f, 0f, Color.rgb(140, 110, 255)); // мягкое свечение
 
         Random r = new Random(8);
         for (int i = 0; i < starLon.length; i++) {
@@ -189,10 +191,11 @@ public class BallView extends View {
         // окошко с ответом
         project(0, 0, p);
         if (p[2] > 0) {
-            float d = r * (float) Math.sqrt(1 - WINDOW_K * WINDOW_K);
+            float k = WINDOW_K + (1f - WINDOW_K) * windowGrow;
+            float d = r * (float) Math.sqrt(Math.max(0f, 1 - k * k));
             float sx = cx + p[0] * d;
             float sy = cy - p[1] * d;
-            drawOnSphere(canvas, sx, sy, p, r * WINDOW_K, true);
+            drawOnSphere(canvas, sx, sy, p, r * k, true);
         }
 
         canvas.drawCircle(cx, cy, r, shadePaint);
@@ -228,49 +231,48 @@ public class BallView extends View {
     }
 
     private void drawWindow(Canvas canvas, float wr, float facing) {
-        windowPaint.setShader(new RadialGradient(0, 0, wr,
-                new int[]{Color.rgb(28, 28, 80), Color.rgb(5, 5, 22)}, null, Shader.TileMode.CLAMP));
-        canvas.drawCircle(0, 0, wr, windowPaint);
-        canvas.drawCircle(0, 0, wr, ringPaint);
+        int wa = (int) (255 * windowAlpha);
+        if (wa > 0) {
+            windowPaint.setShader(new RadialGradient(0, 0, wr,
+                    new int[]{Color.rgb(28, 28, 80), Color.rgb(5, 5, 22)}, null, Shader.TileMode.CLAMP));
+            windowPaint.setAlpha(wa);
+            ringPaint.setAlpha(wa);
+            canvas.drawCircle(0, 0, wr, windowPaint);
+            canvas.drawCircle(0, 0, wr, ringPaint);
+        }
 
         int alpha = (int) (255 * answerAlpha * Math.min(1f, facing * 1.5f));
         if (alpha <= 0) return;
 
+        // Текст свёрстан под полный радиус шара и масштабируется вместе с окошком
+        float r = radius();
+        StaticLayout layout = layoutFor(r);
+        float scale = wr / r * answerScale;
         canvas.save();
-        canvas.scale(answerScale, answerScale);
-        float ts = wr * 0.9f;
-        triangle.reset();
-        triangle.moveTo(-ts, -ts * 0.55f);
-        triangle.lineTo(ts, -ts * 0.55f);
-        triangle.lineTo(0, ts * 0.95f);
-        triangle.close();
-        trianglePaint.setAlpha(alpha);
-        canvas.drawPath(triangle, trianglePaint);
-
+        canvas.scale(scale, scale);
         textPaint.setAlpha(alpha);
-        StaticLayout layout = layoutFor(wr, ts);
-        canvas.translate(-layout.getWidth() / 2f, -ts * 0.2f - layout.getHeight() / 2f);
+        canvas.translate(-layout.getWidth() / 2f, -layout.getHeight() / 2f);
         layout.draw(canvas);
         canvas.restore();
     }
 
-    private StaticLayout layoutFor(float wr, float ts) {
+    private StaticLayout layoutFor(float r) {
         String text = answer.toUpperCase();
-        if (cachedLayout != null && text.equals(cachedText) && cachedRadius == wr) {
+        if (cachedLayout != null && text.equals(cachedText) && cachedRadius == r) {
             return cachedLayout;
         }
-        int width = (int) (ts * 1.15f);
-        float size = wr * 0.30f;
+        int width = (int) (r * 1.45f);
+        float size = r * 0.36f;
         StaticLayout layout;
         while (true) {
             textPaint.setTextSize(size);
             layout = makeLayout(text, width);
-            if ((layout.getHeight() <= ts * 0.9f && fitsWords(text, width)) || size < 8) break;
-            size *= 0.9f;
+            if ((layout.getHeight() <= r * 1.1f && fitsWords(text, width)) || size < 8) break;
+            size *= 0.92f;
         }
         cachedLayout = layout;
         cachedText = text;
-        cachedRadius = wr;
+        cachedRadius = r;
         return layout;
     }
 
@@ -292,6 +294,8 @@ public class BallView extends View {
         animating = true;
         pickRandomAxis();
         final float startZoom = zoom;
+        final float startGrow = windowGrow;
+        final float startWindowAlpha = windowAlpha;
 
         // ответ быстро гаснет в начале вращения
         ValueAnimator spin = ValueAnimator.ofFloat(0f, 1f);
@@ -308,6 +312,9 @@ public class BallView extends View {
                 // в начале вращения шар возвращается к обычному размеру
                 float k = Math.min(1f, time * 5);
                 zoom = startZoom + (1f - startZoom) * k;
+                // окошко снова сжимается и проявляется
+                windowGrow = startGrow * (1f - k);
+                windowAlpha = startWindowAlpha + (1f - startWindowAlpha) * k;
                 float bounce = 1f + 0.04f * (float) Math.sin(time * Math.PI * 6) * (1 - t);
                 setScaleX(zoom * bounce);
                 setScaleY(zoom * bounce);
@@ -321,22 +328,31 @@ public class BallView extends View {
                 zoom = 1f;
                 setScaleX(1f);
                 setScaleY(1f);
+                windowGrow = 0f;
+                windowAlpha = 1f;
                 answer = newAnswer;
                 if (listener != null) listener.onSpinFinished();
             }
         });
 
+        // Окошко разъезжается до размеров шара, круг растворяется, остаётся фраза
         ValueAnimator reveal = ValueAnimator.ofFloat(0f, 1f);
         reveal.setDuration(REVEAL_DURATION_MS);
-        reveal.setInterpolator(new OvershootInterpolator(1.5f));
+        reveal.setInterpolator(new LinearInterpolator());
+        final DecelerateInterpolator ease = new DecelerateInterpolator(2f);
+        final OvershootInterpolator overshoot = new OvershootInterpolator(1.5f);
         reveal.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override
             public void onAnimationUpdate(ValueAnimator a) {
-                float v = (float) a.getAnimatedValue();
-                answerAlpha = Math.min(1f, Math.max(0f, v));
-                answerScale = 0.5f + 0.5f * v;
+                float u = (float) a.getAnimatedValue();
+                float grow = ease.getInterpolation(Math.min(1f, u / 0.5f));
+                windowGrow = grow;
+                answerAlpha = Math.min(1f, u / 0.3f);
+                answerScale = 1f;
+                float dissolve = Math.max(0f, Math.min(1f, (u - 0.4f) / 0.6f));
+                windowAlpha = 1f - dissolve * dissolve * (3 - 2 * dissolve);
                 // шар увеличивается вместе с появлением ответа
-                zoom = 1f + (ZOOM_SCALE - 1f) * v;
+                zoom = 1f + (ZOOM_SCALE - 1f) * overshoot.getInterpolation(Math.min(1f, u / 0.6f));
                 setScaleX(zoom);
                 setScaleY(zoom);
                 invalidate();
