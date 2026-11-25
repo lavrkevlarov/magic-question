@@ -41,9 +41,11 @@ public class BallView extends View {
     private final Paint shadePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint windowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint glarePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint starPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint floorPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint auraPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint rimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint sheenPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint specPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint textPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final Path triangle = new Path();
     private final Path ballClip = new Path();
@@ -61,6 +63,10 @@ public class BallView extends View {
     private float zoom = 1f;
     private float windowGrow = 0f;  // 0 — обычное окошко, 1 — окошко размером с шар
     private float windowAlpha = 1f; // непрозрачность круга окошка (0 — растворился)
+    private float glow = 0.35f;     // яркость подсветки 0..1
+    private float pendingTextAlpha = 0f;
+    private float pendingTextScale = 1f;
+    private float pendingTextX, pendingTextY;
     private final Random random = new Random();
 
     private String answer = "?";
@@ -108,19 +114,28 @@ public class BallView extends View {
         super.onSizeChanged(w, h, oldw, oldh);
         float r = radius();
         float cx = w / 2f, cy = h / 2f;
-        ballPaint.setShader(new RadialGradient(cx - r * 0.3f, cy - r * 0.35f, r * 1.45f,
-                new int[]{Color.rgb(85, 82, 110), Color.rgb(22, 20, 32), Color.BLACK},
-                new float[]{0f, 0.45f, 1f}, Shader.TileMode.CLAMP));
+        ballPaint.setShader(new RadialGradient(cx - r * 0.35f, cy - r * 0.4f, r * 1.5f,
+                new int[]{Color.rgb(58, 52, 84), Color.rgb(20, 17, 32), Color.BLACK},
+                new float[]{0f, 0.35f, 1f}, Shader.TileMode.CLAMP));
         // затемнение у края — объём поверх подвижных деталей
         shadePaint.setShader(new RadialGradient(cx - r * 0.25f, cy - r * 0.3f, r * 1.35f,
-                new int[]{Color.argb(0, 0, 0, 0), Color.argb(0, 0, 0, 0), Color.argb(200, 0, 0, 0)},
+                new int[]{Color.argb(0, 0, 0, 0), Color.argb(0, 0, 0, 0), Color.argb(205, 0, 0, 0)},
                 new float[]{0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
-        glarePaint.setShader(new RadialGradient(cx - r * 0.38f, cy - r * 0.48f, r * 0.4f,
-                new int[]{Color.argb(140, 255, 255, 255), Color.argb(0, 255, 255, 255)},
+        // свечение вокруг шара
+        auraPaint.setShader(new RadialGradient(cx, cy, r * 1.35f,
+                new int[]{Color.argb(140, 110, 80, 255), Color.argb(90, 110, 80, 255), Color.argb(0, 110, 80, 255)},
+                new float[]{0f, 0.72f, 1f}, Shader.TileMode.CLAMP));
+        // контровая подсветка по нижнему краю
+        rimPaint.setShader(new RadialGradient(cx + r * 0.1f, cy - r * 0.3f, r * 1.32f,
+                new int[]{Color.argb(0, 120, 90, 255), Color.argb(0, 120, 90, 255), Color.argb(255, 140, 110, 255)},
+                new float[]{0f, 0.8f, 1f}, Shader.TileMode.CLAMP));
+        // мягкое отражение сверху и острый блик (в локальных координатах)
+        sheenPaint.setShader(new RadialGradient(0, 0, r * 0.62f,
+                new int[]{Color.argb(34, 255, 255, 255), Color.argb(0, 255, 255, 255)},
                 null, Shader.TileMode.CLAMP));
-        floorPaint.setShader(new RadialGradient(0, 0, 1f,
-                new int[]{Color.argb(150, 80, 60, 200), Color.argb(0, 80, 60, 200)},
-                null, Shader.TileMode.CLAMP));
+        specPaint.setShader(new RadialGradient(0, 0, r * 0.17f,
+                new int[]{Color.argb(230, 255, 255, 255), Color.argb(115, 255, 255, 255), Color.argb(0, 255, 255, 255)},
+                new float[]{0f, 0.4f, 1f}, Shader.TileMode.CLAMP));
         ringPaint.setStrokeWidth(r * 0.03f);
         ballClip.reset();
         ballClip.addCircle(cx, cy, r, Path.Direction.CW);
@@ -166,12 +181,8 @@ public class BallView extends View {
         float cx = getWidth() / 2f, cy = getHeight() / 2f;
         float r = radius();
 
-        // свечение-тень под шаром
-        canvas.save();
-        canvas.translate(cx, cy + r * 1.08f);
-        canvas.scale(r * 0.8f, r * 0.14f);
-        canvas.drawCircle(0, 0, 1f, floorPaint);
-        canvas.restore();
+        auraPaint.setAlpha((int) (255 * glow));
+        canvas.drawCircle(cx, cy, r * 1.35f, auraPaint);
 
         canvas.drawCircle(cx, cy, r, ballPaint);
 
@@ -189,6 +200,7 @@ public class BallView extends View {
         }
 
         // окошко с ответом
+        pendingTextAlpha = 0f;
         project(0, 0, p);
         if (p[2] > 0) {
             float k = WINDOW_K + (1f - WINDOW_K) * windowGrow;
@@ -199,21 +211,48 @@ public class BallView extends View {
         }
 
         canvas.drawCircle(cx, cy, r, shadePaint);
+        rimPaint.setAlpha((int) (255 * (0.5f + 0.45f * glow)));
+        canvas.drawCircle(cx, cy, r, rimPaint);
+
+        // фраза поверх затемнения, чтобы её было хорошо видно
+        if (pendingTextAlpha > 0) {
+            drawOnSphere(canvas, pendingTextX, pendingTextY, p, 0, false, true);
+        }
+
+        canvas.save();
+        canvas.translate(cx - r * 0.05f, cy - r * 0.62f);
+        canvas.scale(1f, 0.45f);
+        canvas.drawCircle(0, 0, r * 0.62f, sheenPaint);
+        canvas.restore();
         canvas.restore();
 
-        canvas.drawCircle(cx - r * 0.38f, cy - r * 0.48f, r * 0.4f, glarePaint);
+        canvas.save();
+        canvas.translate(cx - r * 0.42f, cy - r * 0.5f);
+        canvas.rotate(-40f);
+        canvas.scale(1f, 0.5f);
+        canvas.drawCircle(0, 0, r * 0.17f, specPaint);
+        canvas.restore();
     }
 
     /** Рисует плоский элемент, «приклеенный» к сфере: сжимаем его по направлению к краю. */
     private void drawOnSphere(Canvas canvas, float sx, float sy, float[] n, float size, boolean window) {
+        drawOnSphere(canvas, sx, sy, n, size, window, false);
+    }
+
+    private void drawOnSphere(Canvas canvas, float sx, float sy, float[] n, float size,
+                              boolean window, boolean text) {
         double angle = Math.toDegrees(Math.atan2(-n[1], n[0]));
         canvas.save();
         canvas.translate(sx, sy);
         canvas.rotate((float) angle);
         canvas.scale(Math.max(n[2], 0.001f), 1f);
         canvas.rotate((float) -angle);
-        if (window) {
+        if (text) {
+            drawText(canvas);
+        } else if (window) {
             drawWindow(canvas, size, n[2]);
+            pendingTextX = sx;
+            pendingTextY = sy;
         } else {
             drawStar(canvas, size);
         }
@@ -241,19 +280,19 @@ public class BallView extends View {
             canvas.drawCircle(0, 0, wr, ringPaint);
         }
 
-        int alpha = (int) (255 * answerAlpha * Math.min(1f, facing * 1.5f));
-        if (alpha <= 0) return;
+        pendingTextAlpha = answerAlpha * Math.min(1f, facing * 1.5f);
+        pendingTextScale = wr / radius() * answerScale;
+    }
 
+    private void drawText(Canvas canvas) {
+        int alpha = (int) (255 * pendingTextAlpha);
+        if (alpha <= 0) return;
         // Текст свёрстан под полный радиус шара и масштабируется вместе с окошком
-        float r = radius();
-        StaticLayout layout = layoutFor(r);
-        float scale = wr / r * answerScale;
-        canvas.save();
-        canvas.scale(scale, scale);
+        StaticLayout layout = layoutFor(radius());
+        canvas.scale(pendingTextScale, pendingTextScale);
         textPaint.setAlpha(alpha);
         canvas.translate(-layout.getWidth() / 2f, -layout.getHeight() / 2f);
         layout.draw(canvas);
-        canvas.restore();
     }
 
     private StaticLayout layoutFor(float r) {
@@ -296,6 +335,7 @@ public class BallView extends View {
         final float startZoom = zoom;
         final float startGrow = windowGrow;
         final float startWindowAlpha = windowAlpha;
+        final float startGlow = glow;
 
         // ответ быстро гаснет в начале вращения
         ValueAnimator spin = ValueAnimator.ofFloat(0f, 1f);
@@ -315,6 +355,8 @@ public class BallView extends View {
                 // окошко снова сжимается и проявляется
                 windowGrow = startGrow * (1f - k);
                 windowAlpha = startWindowAlpha + (1f - startWindowAlpha) * k;
+                // подсветка разгорается во время вращения
+                glow = startGlow + (0.8f - startGlow) * Math.min(1f, time * 3);
                 float bounce = 1f + 0.04f * (float) Math.sin(time * Math.PI * 6) * (1 - t);
                 setScaleX(zoom * bounce);
                 setScaleY(zoom * bounce);
@@ -351,6 +393,8 @@ public class BallView extends View {
                 answerScale = 1f;
                 float dissolve = Math.max(0f, Math.min(1f, (u - 0.4f) / 0.6f));
                 windowAlpha = 1f - dissolve * dissolve * (3 - 2 * dissolve);
+                // вспышка подсветки при появлении ответа
+                glow = Math.min(1f, 0.8f + 0.3f * (float) Math.sin(Math.PI * u) - 0.1f * u);
                 // шар увеличивается вместе с появлением ответа
                 zoom = 1f + (ZOOM_SCALE - 1f) * overshoot.getInterpolation(Math.min(1f, u / 0.6f));
                 setScaleX(zoom);
