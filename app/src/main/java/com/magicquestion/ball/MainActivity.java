@@ -97,6 +97,13 @@ public class MainActivity extends Activity implements SensorEventListener {
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP));
 
+        ballView.setListener(new BallView.Listener() {
+            @Override
+            public void onSpinFinished() {
+                vibrate(40);
+            }
+        });
+
         ballView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -154,18 +161,18 @@ public class MainActivity extends Activity implements SensorEventListener {
             index = random.nextInt(ANSWERS.length);
         } while (index == lastIndex && ANSWERS.length > 1);
         lastIndex = index;
-        vibrate();
+        vibrate(80);
         ballView.showAnswer(ANSWERS[index]);
     }
 
     @SuppressWarnings("deprecation")
-    private void vibrate() {
+    private void vibrate(long ms) {
         Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
         if (v == null || !v.hasVibrator()) return;
         if (Build.VERSION.SDK_INT >= 26) {
-            v.vibrate(VibrationEffect.createOneShot(80, VibrationEffect.DEFAULT_AMPLITUDE));
+            v.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
         } else {
-            v.vibrate(80);
+            v.vibrate(ms);
         }
     }
 }

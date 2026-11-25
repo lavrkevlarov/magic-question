@@ -3,7 +3,6 @@ package com.magicquestion.ball;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
-import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
@@ -17,32 +16,81 @@ import android.text.Layout;
 import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.view.View;
-import android.view.animation.AccelerateDecelerateInterpolator;
+import android.view.animation.DecelerateInterpolator;
+import android.view.animation.OvershootInterpolator;
 
-/** Рисует магический шар с окошком, в котором всплывает ответ. */
+import java.util.Random;
+
+/**
+ * Рисует магический шар как 3D-сферу. Окошко с ответом и узор на поверхности
+ * проецируются на сферу, поэтому при вращении они уходят за край и возвращаются.
+ */
 public class BallView extends View {
 
+    public interface Listener {
+        void onSpinFinished();
+    }
+
+    private static final long SPIN_DURATION_MS = 3000;
+    private static final long REVEAL_DURATION_MS = 800;
+    private static final int TURNS = 5;          // сколько оборотов делает шар
+    private static final float WINDOW_K = 0.45f; // радиус окошка относительно радиуса шара
+
     private final Paint ballPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint shadePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint windowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint trianglePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint glarePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint starPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint floorPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint textPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final Path triangle = new Path();
+    private final Path ballClip = new Path();
+
+    // Узор на поверхности: звёздочки с долготой/широтой (радианы)
+    private final float[] starLon = new float[22];
+    private final float[] starLat = new float[22];
+    private final float[] starSize = new float[22];
+
+    // Текущий поворот сферы: вокруг вертикальной оси и наклон вперёд/назад
+    private float spinAngle = 0f;
+    private float tiltAngle = 0f;
 
     private String answer = "?";
-    private float answerAlpha = 1f;   // прозрачность ответа 0..1
+    private float answerAlpha = 1f;
     private float answerScale = 1f;
     private boolean animating = false;
+    private Listener listener;
+
+    private StaticLayout cachedLayout;
+    private String cachedText;
+    private float cachedRadius;
 
     public BallView(Context context) {
         super(context);
         ringPaint.setStyle(Paint.Style.STROKE);
-        ringPaint.setColor(Color.rgb(40, 40, 60));
+        ringPaint.setColor(Color.rgb(45, 45, 70));
         trianglePaint.setColor(Color.rgb(35, 50, 190));
+        starPaint.setColor(Color.rgb(170, 150, 255));
         textPaint.setColor(Color.WHITE);
         textPaint.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
-        textPaint.setTextAlign(Paint.Align.LEFT);
+
+        Random r = new Random(8);
+        for (int i = 0; i < starLon.length; i++) {
+            starLon[i] = (float) (Math.PI * 0.5 + r.nextFloat() * Math.PI * 1.0); // в основном сзади
+            if (i % 3 == 0) starLon[i] = (float) (r.nextFloat() * Math.PI * 2);
+            starLat[i] = (float) ((r.nextFloat() - 0.5) * Math.PI * 0.85);
+            starSize[i] = 0.02f + r.nextFloat() * 0.03f;
+            // не ставим звёзды поверх окошка
+            if (Math.abs(starLat[i]) < 0.6 && Math.cos(starLon[i]) > 0.75) {
+                starLon[i] += Math.PI;
+            }
+        }
+    }
+
+    public void setListener(Listener l) {
+        listener = l;
     }
 
     public boolean isAnimating() {
@@ -54,67 +102,159 @@ public class BallView extends View {
         super.onSizeChanged(w, h, oldw, oldh);
         float r = radius();
         float cx = w / 2f, cy = h / 2f;
-        ballPaint.setShader(new RadialGradient(cx - r * 0.35f, cy - r * 0.4f, r * 1.5f,
-                new int[]{Color.rgb(90, 90, 110), Color.rgb(20, 20, 28), Color.BLACK},
+        ballPaint.setShader(new RadialGradient(cx - r * 0.3f, cy - r * 0.35f, r * 1.45f,
+                new int[]{Color.rgb(85, 82, 110), Color.rgb(22, 20, 32), Color.BLACK},
                 new float[]{0f, 0.45f, 1f}, Shader.TileMode.CLAMP));
-        windowPaint.setShader(new RadialGradient(cx, cy, r * 0.45f,
-                new int[]{Color.rgb(25, 25, 70), Color.rgb(5, 5, 20)},
+        // затемнение у края — объём поверх подвижных деталей
+        shadePaint.setShader(new RadialGradient(cx - r * 0.25f, cy - r * 0.3f, r * 1.35f,
+                new int[]{Color.argb(0, 0, 0, 0), Color.argb(0, 0, 0, 0), Color.argb(200, 0, 0, 0)},
+                new float[]{0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
+        glarePaint.setShader(new RadialGradient(cx - r * 0.38f, cy - r * 0.48f, r * 0.4f,
+                new int[]{Color.argb(140, 255, 255, 255), Color.argb(0, 255, 255, 255)},
                 null, Shader.TileMode.CLAMP));
-        glarePaint.setShader(new RadialGradient(cx - r * 0.4f, cy - r * 0.5f, r * 0.35f,
-                new int[]{Color.argb(110, 255, 255, 255), Color.argb(0, 255, 255, 255)},
+        floorPaint.setShader(new RadialGradient(0, 0, 1f,
+                new int[]{Color.argb(150, 80, 60, 200), Color.argb(0, 80, 60, 200)},
                 null, Shader.TileMode.CLAMP));
-        ringPaint.setStrokeWidth(r * 0.035f);
+        ringPaint.setStrokeWidth(r * 0.03f);
+        ballClip.reset();
+        ballClip.addCircle(cx, cy, r, Path.Direction.CW);
     }
 
     private float radius() {
-        return Math.min(getWidth(), getHeight()) * 0.42f;
+        return Math.min(getWidth(), getHeight()) * 0.40f;
     }
+
+    /** Поворачивает точку сферы (долгота, широта) и возвращает {x, y, z}; z > 0 — к зрителю. */
+    private void project(float lon, float lat, float[] out) {
+        double l = lon + spinAngle;
+        double x = Math.cos(lat) * Math.sin(l);
+        double y = Math.sin(lat);
+        double z = Math.cos(lat) * Math.cos(l);
+        double ct = Math.cos(tiltAngle), st = Math.sin(tiltAngle);
+        out[0] = (float) x;
+        out[1] = (float) (y * ct + z * st);
+        out[2] = (float) (-y * st + z * ct);
+    }
+
+    private final float[] p = new float[3];
 
     @Override
     protected void onDraw(Canvas canvas) {
         float cx = getWidth() / 2f, cy = getHeight() / 2f;
         float r = radius();
-        float wr = r * 0.45f; // радиус окошка
+
+        // свечение-тень под шаром
+        canvas.save();
+        canvas.translate(cx, cy + r * 1.08f);
+        canvas.scale(r * 0.8f, r * 0.14f);
+        canvas.drawCircle(0, 0, 1f, floorPaint);
+        canvas.restore();
 
         canvas.drawCircle(cx, cy, r, ballPaint);
-        canvas.drawCircle(cx - r * 0.4f, cy - r * 0.5f, r * 0.35f, glarePaint);
-        canvas.drawCircle(cx, cy, wr, windowPaint);
-        canvas.drawCircle(cx, cy, wr, ringPaint);
 
-        int alpha = (int) (255 * answerAlpha);
+        canvas.save();
+        canvas.clipPath(ballClip);
+
+        // звёздочки на поверхности
+        for (int i = 0; i < starLon.length; i++) {
+            project(starLon[i], starLat[i], p);
+            if (p[2] <= 0) continue;
+            float sx = cx + p[0] * r;
+            float sy = cy - p[1] * r;
+            starPaint.setAlpha((int) (200 * p[2]));
+            drawOnSphere(canvas, sx, sy, p, starSize[i] * r, false);
+        }
+
+        // окошко с ответом
+        project(0, 0, p);
+        if (p[2] > 0) {
+            float d = r * (float) Math.sqrt(1 - WINDOW_K * WINDOW_K);
+            float sx = cx + p[0] * d;
+            float sy = cy - p[1] * d;
+            drawOnSphere(canvas, sx, sy, p, r * WINDOW_K, true);
+        }
+
+        canvas.drawCircle(cx, cy, r, shadePaint);
+        canvas.restore();
+
+        canvas.drawCircle(cx - r * 0.38f, cy - r * 0.48f, r * 0.4f, glarePaint);
+    }
+
+    /** Рисует плоский элемент, «приклеенный» к сфере: сжимаем его по направлению к краю. */
+    private void drawOnSphere(Canvas canvas, float sx, float sy, float[] n, float size, boolean window) {
+        double angle = Math.toDegrees(Math.atan2(-n[1], n[0]));
+        canvas.save();
+        canvas.translate(sx, sy);
+        canvas.rotate((float) angle);
+        canvas.scale(Math.max(n[2], 0.001f), 1f);
+        canvas.rotate((float) -angle);
+        if (window) {
+            drawWindow(canvas, size, n[2]);
+        } else {
+            drawStar(canvas, size);
+        }
+        canvas.restore();
+    }
+
+    private void drawStar(Canvas canvas, float s) {
+        triangle.reset();
+        triangle.moveTo(0, -s);
+        triangle.quadTo(0, 0, s, 0);
+        triangle.quadTo(0, 0, 0, s);
+        triangle.quadTo(0, 0, -s, 0);
+        triangle.quadTo(0, 0, 0, -s);
+        canvas.drawPath(triangle, starPaint);
+    }
+
+    private void drawWindow(Canvas canvas, float wr, float facing) {
+        windowPaint.setShader(new RadialGradient(0, 0, wr,
+                new int[]{Color.rgb(28, 28, 80), Color.rgb(5, 5, 22)}, null, Shader.TileMode.CLAMP));
+        canvas.drawCircle(0, 0, wr, windowPaint);
+        canvas.drawCircle(0, 0, wr, ringPaint);
+
+        int alpha = (int) (255 * answerAlpha * Math.min(1f, facing * 1.5f));
         if (alpha <= 0) return;
 
         canvas.save();
-        canvas.scale(answerScale, answerScale, cx, cy);
-
-        // Синий треугольник-«кубик»
-        float ts = wr * 0.92f;
+        canvas.scale(answerScale, answerScale);
+        float ts = wr * 0.9f;
         triangle.reset();
-        triangle.moveTo(cx - ts, cy - ts * 0.55f);
-        triangle.lineTo(cx + ts, cy - ts * 0.55f);
-        triangle.lineTo(cx, cy + ts * 0.95f);
+        triangle.moveTo(-ts, -ts * 0.55f);
+        triangle.lineTo(ts, -ts * 0.55f);
+        triangle.lineTo(0, ts * 0.95f);
         triangle.close();
         trianglePaint.setAlpha(alpha);
         canvas.drawPath(triangle, trianglePaint);
 
-        // Текст ответа, переносим по словам и подбираем размер
         textPaint.setAlpha(alpha);
-        int textWidth = (int) (ts * 1.15f);
-        float size = wr * 0.30f;
-        StaticLayout layout;
-        while (true) {
-            textPaint.setTextSize(size);
-            layout = makeLayout(answer.toUpperCase(), textWidth);
-            if ((layout.getHeight() <= ts * 0.9f && fitsWords(textWidth)) || size < 8) break;
-            size *= 0.9f;
-        }
-        canvas.translate(cx - textWidth / 2f, cy - ts * 0.2f - layout.getHeight() / 2f);
+        StaticLayout layout = layoutFor(wr, ts);
+        canvas.translate(-layout.getWidth() / 2f, -ts * 0.2f - layout.getHeight() / 2f);
         layout.draw(canvas);
         canvas.restore();
     }
 
-    private boolean fitsWords(int width) {
-        for (String word : answer.toUpperCase().split(" ")) {
+    private StaticLayout layoutFor(float wr, float ts) {
+        String text = answer.toUpperCase();
+        if (cachedLayout != null && text.equals(cachedText) && cachedRadius == wr) {
+            return cachedLayout;
+        }
+        int width = (int) (ts * 1.15f);
+        float size = wr * 0.30f;
+        StaticLayout layout;
+        while (true) {
+            textPaint.setTextSize(size);
+            layout = makeLayout(text, width);
+            if ((layout.getHeight() <= ts * 0.9f && fitsWords(text, width)) || size < 8) break;
+            size *= 0.9f;
+        }
+        cachedLayout = layout;
+        cachedText = text;
+        cachedRadius = wr;
+        return layout;
+    }
+
+    private boolean fitsWords(String text, int width) {
+        for (String word : text.split(" ")) {
             if (textPaint.measureText(word) > width) return false;
         }
         return true;
@@ -126,48 +266,56 @@ public class BallView extends View {
                 0.95f, 0f, false);
     }
 
-    /** Встряхивает шар, прячет старый ответ и проявляет новый. */
+    /** Крутит шар 3 секунды, затем проявляет новый ответ. */
     public void showAnswer(final String newAnswer) {
         animating = true;
 
-        float d = getWidth() * 0.04f;
-        ObjectAnimator shake = ObjectAnimator.ofFloat(this, "translationX",
-                0, -d, d, -d, d, -d * 0.6f, d * 0.6f, 0);
-        shake.setDuration(600);
-
-        ValueAnimator fadeOut = ValueAnimator.ofFloat(answerAlpha, 0f);
-        fadeOut.setDuration(250);
-        fadeOut.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+        // ответ быстро гаснет в начале вращения
+        ValueAnimator spin = ValueAnimator.ofFloat(0f, 1f);
+        spin.setDuration(SPIN_DURATION_MS);
+        spin.setInterpolator(new DecelerateInterpolator(1.8f));
+        final float startAlpha = answerAlpha;
+        spin.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override
             public void onAnimationUpdate(ValueAnimator a) {
-                answerAlpha = (float) a.getAnimatedValue();
+                float t = (float) a.getAnimatedValue();
+                float time = a.getCurrentPlayTime() / (float) SPIN_DURATION_MS;
+                spinAngle = (float) (t * TURNS * 2 * Math.PI);
+                tiltAngle = (float) (0.55 * Math.sin(time * Math.PI * 4) * (1 - t));
+                answerAlpha = Math.max(0f, startAlpha * (1 - time * 6));
+                float bounce = 1f + 0.04f * (float) Math.sin(time * Math.PI * 6) * (1 - t);
+                setScaleX(bounce);
+                setScaleY(bounce);
                 invalidate();
             }
         });
-        fadeOut.addListener(new AnimatorListenerAdapter() {
+        spin.addListener(new AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(Animator animation) {
+                spinAngle = 0f;
+                tiltAngle = 0f;
+                setScaleX(1f);
+                setScaleY(1f);
                 answer = newAnswer;
+                if (listener != null) listener.onSpinFinished();
             }
         });
 
-        ValueAnimator fadeIn = ValueAnimator.ofFloat(0f, 1f);
-        fadeIn.setDuration(900);
-        fadeIn.setStartDelay(350);
-        fadeIn.setInterpolator(new AccelerateDecelerateInterpolator());
-        fadeIn.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+        ValueAnimator reveal = ValueAnimator.ofFloat(0f, 1f);
+        reveal.setDuration(REVEAL_DURATION_MS);
+        reveal.setInterpolator(new OvershootInterpolator(1.5f));
+        reveal.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override
             public void onAnimationUpdate(ValueAnimator a) {
                 float v = (float) a.getAnimatedValue();
-                answerAlpha = v;
-                answerScale = 0.6f + 0.4f * v;
+                answerAlpha = Math.min(1f, Math.max(0f, v));
+                answerScale = 0.5f + 0.5f * v;
                 invalidate();
             }
         });
 
         AnimatorSet set = new AnimatorSet();
-        set.play(shake).with(fadeOut);
-        set.play(fadeIn).after(fadeOut);
+        set.playSequentially(spin, reveal);
         set.addListener(new AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(Animator animation) {
