@@ -47,6 +47,8 @@ public class BallView extends View {
     private final Paint crescentPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint specPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path crescent = new Path();
+    private final Paint shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private boolean lightTheme = false;
     private final TextPaint textPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final Path ballClip = new Path();
 
@@ -99,6 +101,12 @@ public class BallView extends View {
         }
     }
 
+    /** Светлая тема: ореол слабее, под шаром появляется мягкая тень. */
+    public void setLightTheme(boolean light) {
+        lightTheme = light;
+        invalidate();
+    }
+
     public void setListener(Listener l) {
         listener = l;
     }
@@ -138,6 +146,8 @@ public class BallView extends View {
         specPaint.setShader(new RadialGradient(0, 0, r * 0.18f,
                 Color.argb(230, 255, 255, 255), Color.argb(0, 255, 255, 255), Shader.TileMode.CLAMP));
         textPaint.setShadowLayer(r * 0.12f, 0f, 0f, Color.argb(191, 140, 180, 255));
+        shadowPaint.setShader(new RadialGradient(0, 0, r * 0.85f,
+                Color.argb(70, 20, 30, 60), Color.argb(0, 20, 30, 60), Shader.TileMode.CLAMP));
         cachedLayout = null;
         ballClip.reset();
         ballClip.addCircle(cx, cy, r, Path.Direction.CW);
@@ -183,7 +193,16 @@ public class BallView extends View {
         float cx = getWidth() / 2f, cy = getHeight() / 2f;
         float r = radius();
 
-        auraPaint.setAlpha((int) (255 * (0.22f + 0.15f * reveal)));
+        if (lightTheme) {
+            canvas.save();
+            canvas.translate(cx, cy + r * 1.08f);
+            canvas.scale(1f, 0.14f);
+            canvas.drawCircle(0, 0, r * 0.85f, shadowPaint);
+            canvas.restore();
+            auraPaint.setAlpha((int) (255 * (0.10f + 0.22f * reveal)));
+        } else {
+            auraPaint.setAlpha((int) (255 * (0.22f + 0.15f * reveal)));
+        }
         canvas.drawCircle(cx, cy, r * 1.3f, auraPaint);
 
         canvas.drawCircle(cx, cy, r, ballPaint);
