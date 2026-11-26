@@ -26,7 +26,7 @@ import android.view.animation.OvershootInterpolator;
 import java.util.Random;
 
 /**
- * Магический шар как 3D-сфера. Окошко с ответом, восьмёрка на обратной стороне и звёзды
+ * Магический шар как 3D-сфера. Окошко с ответом и звёзды
  * проецируются на поверхность через касательный базис, поэтому честно поворачиваются
  * и сжимаются у края при вращении вокруг любой оси. Сцена живёт непрерывно: шар
  * парит, слегка покачивается, ореол дышит, на фоне плывут огоньки, при быстром
@@ -42,7 +42,6 @@ public class BallView extends View {
     private static final long REVEAL_DURATION_MS = 1500;
     private static final int TURNS = 5;            // сколько оборотов делает шар
     private static final float WINDOW_K = 0.45f;   // радиус окошка относительно радиуса шара
-    private static final float EMBLEM_K = 0.40f;   // радиус круга с восьмёркой
     private static final float ZOOM_SCALE = 1.2f;  // во сколько раз шар увеличивается с ответом
     private static final int GHOSTS = 5;           // кадров в следе размытия
     private static final int LUT_SIZE = 512;
@@ -56,8 +55,6 @@ public class BallView extends View {
     private final Paint crescentPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint specPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint emblemPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint eightPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint bokehPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint textPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final Path crescent = new Path();
@@ -105,7 +102,6 @@ public class BallView extends View {
     private boolean animating = false;
     private Listener listener;
 
-    private float eightBaseline;
     private long lastFrameMs = 0;
     private float time = 0f;
     private boolean running = true;
@@ -123,9 +119,6 @@ public class BallView extends View {
         super(context);
         textPaint.setColor(Color.rgb(232, 240, 255));
         textPaint.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
-        eightPaint.setColor(Color.rgb(12, 14, 22));
-        eightPaint.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
-        eightPaint.setTextAlign(Paint.Align.CENTER);
         starPaint.setColor(Color.rgb(170, 190, 255));
 
         Random r = new Random(8);
@@ -134,9 +127,9 @@ public class BallView extends View {
             starLat[i] = (float) ((r.nextFloat() - 0.5) * Math.PI * 0.85);
             starSize[i] = 0.015f + r.nextFloat() * 0.022f;
             starPhase[i] = r.nextFloat() * 6.28f;
-            // не ставим звёзды поверх окошка и восьмёрки
+            // не ставим звёзды поверх окошка
             double c = Math.cos(starLon[i]);
-            if (Math.abs(starLat[i]) < 0.65 && Math.abs(c) > 0.7) {
+            if (Math.abs(starLat[i]) < 0.65 && c > 0.7) {
                 starLon[i] += (float) (Math.PI / 2);
             }
         }
@@ -218,13 +211,6 @@ public class BallView extends View {
                 Color.argb(230, 255, 255, 255), Color.argb(0, 255, 255, 255), Shader.TileMode.CLAMP));
         shadowPaint.setShader(new RadialGradient(0, 0, r * 0.85f,
                 Color.argb(70, 20, 30, 60), Color.argb(0, 20, 30, 60), Shader.TileMode.CLAMP));
-
-        float er = r * EMBLEM_K;
-        emblemPaint.setShader(new RadialGradient(-er * 0.25f, -er * 0.3f, er * 1.3f,
-                Color.rgb(250, 251, 255), Color.rgb(196, 202, 216), Shader.TileMode.CLAMP));
-        eightPaint.setTextSize(er * 1.35f);
-        Paint.FontMetrics fm = eightPaint.getFontMetrics();
-        eightBaseline = -(fm.ascent + fm.descent) / 2f;
 
         textPaint.setShadowLayer(r * 0.12f, 0f, 0f, Color.argb(191, 140, 180, 255));
         ballClip.reset();
@@ -407,20 +393,6 @@ public class BallView extends View {
             canvas.save();
             canvas.concat(surface);
             canvas.drawCircle(0, 0, starSize[i] * r, starPaint);
-            canvas.restore();
-        }
-
-        // восьмёрка на обратной стороне
-        basis((float) Math.PI, 0f, angle);
-        if (vn[2] > 0f) {
-            float er = r * EMBLEM_K;
-            surfaceMatrix(surface, r * (float) Math.sqrt(1 - EMBLEM_K * EMBLEM_K));
-            canvas.save();
-            canvas.concat(surface);
-            emblemPaint.setAlpha((int) (255 * alphaMul));
-            canvas.drawCircle(0, 0, er, emblemPaint);
-            eightPaint.setAlpha((int) (255 * alphaMul));
-            canvas.drawText("8", 0, eightBaseline, eightPaint);
             canvas.restore();
         }
 
